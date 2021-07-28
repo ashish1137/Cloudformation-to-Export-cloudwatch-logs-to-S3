@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Export cloudWatch logs to S3
+Parameters:
+  # environment identifier for objects (dev, int, uat, prd)
+    Environment:
+        Type: String
+        Default: dev
+        AllowedValues:
+            - dev
+            - int
+            - uat
+            - prd
+        Description: Enter an environment prefix for data extract components
+    DESTINATIONBUCKET:
+        Type: String
+        Description: Name of the new bucket where cloudwatch logs are to be exported
+    GROUPNAME:
+        Type: String
+        Description: Name of the cloudWatch log group which has to be exported
+    PREFIX:
+        Type: String
+        Description: Name of the folder inside the bucket where logs are to be exported. Can leave this empty
+    NDAYS:
+        Type: String
+        Description: If today is April 13th and NDAYS = 0, April 13th logs will be exported. (e.g. 2)
+
+Resources: 
+  
+  MyS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Description: Bucket on which we will attach and test bucket policy
+    Properties:
+      BucketName: !Ref DESTINATIONBUCKET
+          
+  MyS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MyS3Bucket
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: "logs.ap-southeast-2.amazonaws.com"
+          Action: s3:GetBucketAcl
+          Resource: !Sub arn:aws:s3:::${MyS3Bucket}
+        - Effect: Allow
+          Principal:
+            Service: "logs.ap-southeast-2.amazonaws.com"
+          Action: s3:PutObject
+          Resource: !Sub arn:aws:s3:::${MyS3Bucket}/*
+          Condition:
+            StringEquals:
+              s3:x-amz-acl: bucket-owner-full-control
+  LambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName:  !Join ['-', [!Ref Environment, 'export', 'cloudWatch', 'logs', 'to', 'S3', 'role']]
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref Environment, 'export', 'cloudWatch', 'logs', 'to', 'S3']]
+        - Key: environment
+          Value: !Ref Environment
+        - Key: cloudformation:stack
+          Value: !Sub '${AWS::StackName}'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+        - 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
+        - 'arn:aws:iam::aws:policy/CloudWatchEventsFullAccess'
+      
+  Function:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3', 'lambda']]
+      Code:
+        ZipFile: !Sub |
+          import boto3
+          import os
+          import datetime
+          
+          GROUPNAME = os.environ['GROUPNAME']
+          DESTINATIONBUCKET = os.environ['DESTINATIONBUCKET']
+          PREFIX = os.environ['PREFIX']
+          NDAYS = os.environ['NDAYS']
+          numberOfDays = int(NDAYS)
+          
+          today = datetime.datetime.now()
+          start = today - datetime.timedelta(days=numberOfDays)
+          end = today - datetime.timedelta(days=numberOfDays - 1)          
+          fromTimestamp = int(start.timestamp() * 1000)
+          toTimestamp = int(end.timestamp() * 1000)  
+          BUCKET_PREFIX = os.path.join(PREFIX, start.strftime('%Y{0}%m{0}%d').format(os.path.sep))
+          
+          def lambda_handler(event, context):
+              client = boto3.client('logs')
+              client.create_export_task(
+                   logGroupName=GROUPNAME,
+                   fromTime=fromTimestamp,
+                   to=toTimestamp,
+                   destination=DESTINATIONBUCKET,
+                   destinationPrefix=BUCKET_PREFIX
+                  )          	
+
+      Handler: index.lambda_handler
+      Role: !GetAtt 
+        - LambdaRole
+        - Arn
+      Runtime: python3.8
+      Environment:
+        Variables:
+          DESTINATIONBUCKET: !Ref DESTINATIONBUCKET
+          GROUPNAME: !Ref GROUPNAME
+          PREFIX: !Ref PREFIX
+          NDAYS : !Ref NDAYS 
+      Timeout: 15
+      Description: A lambda to export cloudWatch logs to S3
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3']]
+        - Key: environment
+          Value: !Ref Environment
+        - Key: cloudformation:stack
+          Value: !Sub '${AWS::StackName}'
