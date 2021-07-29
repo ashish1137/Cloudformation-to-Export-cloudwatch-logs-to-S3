@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: 2010-09-09
+Transform: 'AWS::Serverless-2016-10-31'
 Description: Export cloudWatch logs to S3
 Parameters:
-  # environment identifier for objects (dev, int, uat, prd)
     Environment:
         Type: String
         Default: dev
@@ -10,25 +10,25 @@ Parameters:
             - int
             - uat
             - prd
-        Description: Enter an environment prefix for data extract components
+        Description: Name of the environment (AllowedValues- dev, int, uat, prd)
     DESTINATIONBUCKET:
         Type: String
         Description: Name of the new bucket where cloudwatch logs are to be exported
     GROUPNAME:
         Type: String
         Description: Name of the cloudWatch log group which has to be exported
-    PREFIX:
+    NUMBEROFDAYS:
         Type: String
-        Description: Name of the folder inside the bucket where logs are to be exported. Can leave this empty
-    NDAYS:
+        Description: If today is November 21st and NUMBEROFDAYS = 1, November 20th logs will be exported. (e.g. 2)
+    SUBSCRIBEREMAIL:
         Type: String
-        Description: If today is April 13th and NDAYS = 0, April 13th logs will be exported. (e.g. 2)
+        Description: Email address who will receive the failure email
 
 Resources: 
   
   MyS3Bucket:
     Type: 'AWS::S3::Bucket'
-    Description: Bucket on which we will attach and test bucket policy
+    Description: Bucket where cloudwatch logs are to be exported
     Properties:
       BucketName: !Ref DESTINATIONBUCKET
           
@@ -76,6 +76,16 @@ Resources:
         - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
         - 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
         - 'arn:aws:iam::aws:policy/CloudWatchEventsFullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonSNSFullAccess'
+        
+  MySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3', 'topic']]
+      DisplayName: !Join [' ', [!Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3', 'topic']], 'failure email with input event payload']]
+      Subscription:
+        - Endpoint: !Ref SUBSCRIBEREMAIL
+          Protocol: email
       
   Function:
     Type: 'AWS::Lambda::Function'
@@ -89,16 +99,15 @@ Resources:
           
           GROUPNAME = os.environ['GROUPNAME']
           DESTINATIONBUCKET = os.environ['DESTINATIONBUCKET']
-          PREFIX = os.environ['PREFIX']
-          NDAYS = os.environ['NDAYS']
-          numberOfDays = int(NDAYS)
+          NUMBEROFDAYS = os.environ['NUMBEROFDAYS']
+          numberOfDays = int(NUMBEROFDAYS)
           
           today = datetime.datetime.now()
           start = today - datetime.timedelta(days=numberOfDays)
           end = today - datetime.timedelta(days=numberOfDays - 1)          
           fromTimestamp = int(start.timestamp() * 1000)
           toTimestamp = int(end.timestamp() * 1000)  
-          BUCKET_PREFIX = os.path.join(PREFIX, start.strftime('%Y{0}%m{0}%d').format(os.path.sep))
+          BUCKET_PREFIX = start.strftime('%Y{0}%m{0}%d').format(os.path.sep)
           
           def lambda_handler(event, context):
               client = boto3.client('logs')
@@ -111,6 +120,8 @@ Resources:
                   )          	
 
       Handler: index.lambda_handler
+      DeadLetterConfig: 
+        TargetArn: !Ref MySNSTopic
       Role: !GetAtt 
         - LambdaRole
         - Arn
@@ -119,8 +130,7 @@ Resources:
         Variables:
           DESTINATIONBUCKET: !Ref DESTINATIONBUCKET
           GROUPNAME: !Ref GROUPNAME
-          PREFIX: !Ref PREFIX
-          NDAYS : !Ref NDAYS 
+          NUMBEROFDAYS : !Ref NUMBEROFDAYS 
       Timeout: 15
       Description: A lambda to export cloudWatch logs to S3
       Tags:
