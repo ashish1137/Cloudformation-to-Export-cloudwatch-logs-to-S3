@@ -2,15 +2,34 @@ AWSTemplateFormatVersion: 2010-09-09
 Transform: 'AWS::Serverless-2016-10-31'
 Description: Export cloudWatch logs to S3
 Parameters:
-    Environment:
+    REGION:
         Type: String
-        Default: dev
+        Default: ap-southeast-2
         AllowedValues:
-            - dev
-            - int
-            - uat
-            - prd
-        Description: Name of the environment (AllowedValues- dev, int, uat, prd)
+            - us-east-1
+            - us-east-2
+            - us-west-1
+            - us-west-2
+            - af-south-1
+            - ap-east-1
+            - ap-south-1
+            - ap-northeast-3
+            - ap-northeast-2
+            - ap-southeast-1
+            - ap-southeast-2
+            - ap-northeast-1
+            - ca-central-1
+            - eu-central-1
+            - eu-west-1
+            - eu-west-2
+            - eu-south-1
+            - eu-west-3
+            - eu-north-1
+            - me-south-1
+            - sa-east-1
+            - us-gov-east-1
+            - us-gov-west-1
+        Description: Name of the region (Eg - ap-southeast-2)
     DESTINATIONBUCKET:
         Type: String
         Description: Name of the new bucket where cloudwatch logs are to be exported
@@ -40,12 +59,12 @@ Resources:
         Statement:
         - Effect: Allow
           Principal:
-            Service: "logs.ap-southeast-2.amazonaws.com"
+            Service: !Sub logs.${REGION}.amazonaws.com
           Action: s3:GetBucketAcl
           Resource: !Sub arn:aws:s3:::${MyS3Bucket}
         - Effect: Allow
           Principal:
-            Service: "logs.ap-southeast-2.amazonaws.com"
+            Service: !Sub logs.${REGION}.amazonaws.com
           Action: s3:PutObject
           Resource: !Sub arn:aws:s3:::${MyS3Bucket}/*
           Condition:
@@ -54,12 +73,10 @@ Resources:
   LambdaRole:
     Type: 'AWS::IAM::Role'
     Properties:
-      RoleName:  !Join ['-', [!Ref Environment, 'export', 'cloudWatch', 'logs', 'to', 'S3', 'role']]
+      RoleName:  !Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'role']]
       Tags:
         - Key: Name
-          Value: !Join ['-', [!Ref Environment, 'export', 'cloudWatch', 'logs', 'to', 'S3']]
-        - Key: environment
-          Value: !Ref Environment
+          Value: !Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3']]
         - Key: cloudformation:stack
           Value: !Sub '${AWS::StackName}'
       AssumeRolePolicyDocument:
@@ -81,8 +98,8 @@ Resources:
   MySNSTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3', 'topic']]
-      DisplayName: !Join [' ', [!Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3', 'topic']], 'failure email with input event payload']]
+      TopicName: !Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'topic']]
+      DisplayName: !Join [' ', [!Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'topic']], 'failure email with input event payload']]
       Subscription:
         - Endpoint: !Ref SUBSCRIBEREMAIL
           Protocol: email
@@ -90,7 +107,7 @@ Resources:
   Function:
     Type: 'AWS::Lambda::Function'
     Properties:
-      FunctionName: !Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3', 'lambda']]
+      FunctionName: !Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'lambda']]
       Code:
         ZipFile: !Sub |
           import boto3
@@ -131,12 +148,11 @@ Resources:
           DESTINATIONBUCKET: !Ref DESTINATIONBUCKET
           GROUPNAME: !Ref GROUPNAME
           NUMBEROFDAYS : !Ref NUMBEROFDAYS 
-      Timeout: 15
+      Timeout: 900
+      MemorySize: 10240
       Description: A lambda to export cloudWatch logs to S3
       Tags:
         - Key: Name
-          Value: !Join ['-', [!Ref Environment, 'cloudWatch', 'logs', 'to', 'S3']]
-        - Key: environment
-          Value: !Ref Environment
+          Value: !Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3']]
         - Key: cloudformation:stack
           Value: !Sub '${AWS::StackName}'
