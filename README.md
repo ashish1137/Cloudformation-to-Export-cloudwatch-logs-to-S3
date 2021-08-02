@@ -1,6 +1,6 @@
-# Cloudformation-to-Export-cloudwatch-logs-to-S3
+# Cloudformation-to-Export-cloudwatch-logs-to-S3-and-then-to-glacier
 
-An end to end cloudformation to export cloudwatch logs to S3. You will need to provide following details.    
+An end to end cloudformation to export cloudwatch logs to S3 and then to glacier. You will need to provide following details.    
 
  1. Region: Name of the region (Eg - ap-southeast-2).
  2. DestinationBucket: Name of the new bucket where cloudwatch logs are to be exported.
