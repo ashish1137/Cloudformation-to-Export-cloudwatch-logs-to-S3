@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: 2010-09-09
 Transform: 'AWS::Serverless-2016-10-31'
-Description: Export cloudWatch logs to S3
+Description: Export cloudWatch logs to S3 and then to Glacier
 Parameters:
-    REGION:
+    Region:
         Type: String
         Default: ap-southeast-2
         AllowedValues:
@@ -30,16 +30,25 @@ Parameters:
             - us-gov-east-1
             - us-gov-west-1
         Description: Name of the region (Eg - ap-southeast-2)
-    DESTINATIONBUCKET:
+    DestinationBucket:
         Type: String
         Description: Name of the new bucket where cloudwatch logs are to be exported
-    GROUPNAME:
+    LogGroupName:
         Type: String
         Description: Name of the cloudWatch log group which has to be exported
-    NUMBEROFDAYS:
-        Type: String
-        Description: If today is November 21st and NUMBEROFDAYS = 1, November 20th logs will be exported. (e.g. 2)
-    SUBSCRIBEREMAIL:
+    NumberOfDays:
+        Type: Number
+        Default: 2
+        Description: If today is November 21st and NumberOfDays = 1, November 20th logs will be exported. (Default- 2)
+    ExpirationInDaysFromGlacier:
+        Type: Number
+        Default: 365
+        Description: Number of days after which items will be deleted from glacier. (Default- 365)
+    TransitionInDaysFromS3ToGlacier:
+        Type: Number
+        Default: 1
+        Description: Number of days after which items will be moved from S3 to glacier. (Default- 1)
+    SubscriberEmail:
         Type: String
         Description: Email address who will receive the failure email
 
@@ -49,7 +58,15 @@ Resources:
     Type: 'AWS::S3::Bucket'
     Description: Bucket where cloudwatch logs are to be exported
     Properties:
-      BucketName: !Ref DESTINATIONBUCKET
+      BucketName: !Ref DestinationBucket
+      LifecycleConfiguration:
+        Rules:
+          - Id: GlacierRule
+            Status: Enabled
+            ExpirationInDays: !Ref ExpirationInDaysFromGlacier
+            Transitions:
+              - TransitionInDays: !Ref TransitionInDaysFromS3ToGlacier
+                StorageClass: GLACIER
           
   MyS3BucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -59,12 +76,12 @@ Resources:
         Statement:
         - Effect: Allow
           Principal:
-            Service: !Sub logs.${REGION}.amazonaws.com
+            Service: !Sub logs.${Region}.amazonaws.com
           Action: s3:GetBucketAcl
           Resource: !Sub arn:aws:s3:::${MyS3Bucket}
         - Effect: Allow
           Principal:
-            Service: !Sub logs.${REGION}.amazonaws.com
+            Service: !Sub logs.${Region}.amazonaws.com
           Action: s3:PutObject
           Resource: !Sub arn:aws:s3:::${MyS3Bucket}/*
           Condition:
@@ -98,10 +115,10 @@ Resources:
   MySNSTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'topic']]
-      DisplayName: !Join [' ', [!Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'topic']], 'failure email with input event payload']]
+      TopicName: !Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'and', 'then', 'to', 'glacier', 'topic']]
+      DisplayName: !Join [' ', [!Join ['-', ['export', 'cloudWatch', 'logs', 'to', 'S3', 'and', 'then', 'to', 'glacier', 'topic']], 'failure email with input event payload']]
       Subscription:
-        - Endpoint: !Ref SUBSCRIBEREMAIL
+        - Endpoint: !Ref SubscriberEmail
           Protocol: email
       
   Function:
@@ -114,14 +131,14 @@ Resources:
           import os
           import datetime
           
-          GROUPNAME = os.environ['GROUPNAME']
-          DESTINATIONBUCKET = os.environ['DESTINATIONBUCKET']
-          NUMBEROFDAYS = os.environ['NUMBEROFDAYS']
-          numberOfDays = int(NUMBEROFDAYS)
+          LogGroupName = os.environ['LogGroupName']
+          DestinationBucket = os.environ['DestinationBucket']
+          NumberOfDays = os.environ['NumberOfDays']
+          NumberOfDays = int(NumberOfDays)
           
           today = datetime.datetime.now()
-          start = today - datetime.timedelta(days=numberOfDays)
-          end = today - datetime.timedelta(days=numberOfDays - 1)          
+          start = today - datetime.timedelta(days=NumberOfDays)
+          end = today - datetime.timedelta(days=NumberOfDays - 1)          
           fromTimestamp = int(start.timestamp() * 1000)
           toTimestamp = int(end.timestamp() * 1000)  
           BUCKET_PREFIX = start.strftime('%Y{0}%m{0}%d').format(os.path.sep)
@@ -129,10 +146,10 @@ Resources:
           def lambda_handler(event, context):
               client = boto3.client('logs')
               client.create_export_task(
-                   logGroupName=GROUPNAME,
+                   logGroupName=LogGroupName,
                    fromTime=fromTimestamp,
                    to=toTimestamp,
-                   destination=DESTINATIONBUCKET,
+                   destination=DestinationBucket,
                    destinationPrefix=BUCKET_PREFIX
                   )          	
 
@@ -145,9 +162,9 @@ Resources:
       Runtime: python3.8
       Environment:
         Variables:
-          DESTINATIONBUCKET: !Ref DESTINATIONBUCKET
-          GROUPNAME: !Ref GROUPNAME
-          NUMBEROFDAYS : !Ref NUMBEROFDAYS 
+          DestinationBucket: !Ref DestinationBucket
+          LogGroupName: !Ref LogGroupName
+          NumberOfDays : !Ref NumberOfDays 
       Timeout: 900
       MemorySize: 10240
       Description: A lambda to export cloudWatch logs to S3
